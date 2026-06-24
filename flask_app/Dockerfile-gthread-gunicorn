@@ -9,23 +9,19 @@ ENV UV_PYTHON_INSTALL_DIR=/usr/local \
 RUN uv python install 3.14t
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y libpq-dev gcc
-RUN uv pip install --system Flask requests psycopg2-binary uwsgi
+RUN uv pip install --system Flask requests gunicorn
 
 COPY . .
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libpq5
+
 COPY --from=build /usr/local /usr/local
 COPY --from=build /app /app
 WORKDIR /app
 
 
-CMD uwsgi --master \
-  --single-interpreter \
+CMD python3.14t -m gunicorn --worker-class gthread \
   --workers $WORKERS \
   --threads $ASYNC_CORES \
-  --protocol http \
-  --socket 0.0.0.0:$PORT_APP \
-  --module $MODULE:app
-
+  --bind 0.0.0.0:$PORT_APP \
+  app:app

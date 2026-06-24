@@ -1,4 +1,4 @@
-# How to use Flask with gevent (uWSGI and Gunicorn editions)
+# How to use Flask with gthread (uWSGI and Gunicorn editions)
 
 ## Create simple Flask application
 
@@ -98,56 +98,14 @@ $ ab -r -n 2000 -c 200 http://127.0.0.1:3000/?delay=1
 > Requests per second:    148.95 [#/sec] (mean)
 ```
 
-## Deploy Flask application using gevent.pywsgi
+## Deploy Flask application using uWSGI with Python 3.14t
 
-First, we need to create an entrypoint:
-
-```python
-# flask_app/pywsgi.py
-from gevent import monkey
-monkey.patch_all()
-
-import os
-from gevent.pywsgi import WSGIServer
-from app import app
-
-http_server = WSGIServer(('0.0.0.0', int(os.environ['PORT_APP'])), app)
-http_server.serve_forever()
-```
-
-Notice, how it patches our flask application. Without `monkey.patch_all()` there would be no benefit from using gevent here.
+Under Python 3.14t, threading natively allows parallelism without monkey patching.
 
 ```bash
-# Build and start app served by gevent.pywsgi
-$ docker-compose -f async-gevent-pywsgi.yml build
-$ docker-compose -f async-gevent-pywsgi.yml up
-
-$ ab -r -n 2000 -c 200 http://127.0.0.1:3000/?delay=1
-> Concurrency Level:      200
-> Time taken for tests:   17.536 seconds
-> Complete requests:      2000
-> Failed requests:        0
-> Requests per second:    114.05 [#/sec] (mean)
-```
-
-## Deploy Flask application using uWSGI + gevent
-
-First, we need to create an entrypoint:
-
-```python
-# flask_app/patched.py
-from gevent import monkey
-monkey.patch_all()
-
-from app import app  # re-export
-```
-
-We need to patch very early.
-
-```bash
-# Build and start app served by uWSGI + gevent
-$ docker-compose -f async-gevent-uwsgi.yml build
-$ docker-compose -f async-gevent-uwsgi.yml up
+# Build and start app served by uWSGI + threads
+$ docker-compose -f async-gthread-uwsgi.yml build
+$ docker-compose -f async-gthread-uwsgi.yml up
 
 $ ab -r -n 2000 -c 200 http://127.0.0.1:3000/?delay=1
 > Time taken for tests:   13.164 seconds
@@ -156,14 +114,14 @@ $ ab -r -n 2000 -c 200 http://127.0.0.1:3000/?delay=1
 > Requests per second:    151.93 [#/sec] (mean)
 ```
 
-## Deploy Flask application using Gunicorn + gevent
+## Deploy Flask application using Gunicorn \+ gthread
 
-This setup uses the same `patched.py` entrypoint.
+This setup runs Gunicorn with the `gthread` worker class directly against `app:app`.
 
 ```bash
-# Build and start app served by Gunicorn + gevent
-$ docker-compose -f async-gevent-gunicorn.yml build
-$ docker-compose -f async-gevent-gunicorn.yml up
+# Build and start app served by Gunicorn + gthread
+$ docker-compose -f async-gthread-gunicorn.yml build
+$ docker-compose -f async-gthread-gunicorn.yml up
 
 $ ab -r -n 2000 -c 200 http://127.0.0.1:3000/?delay=1
 > Concurrency Level:      200
@@ -192,16 +150,14 @@ $ ab -r -n 2000 -c 200 http://127.0.0.1:8080/?delay=1
 > ...
 ```
 
-## Bonus: make psycopg2 gevent-friendly with psycogreen
+## Bonus: psycopg2 natively unblocked with gthread on Python 3.14t
 
-gevent patches only modules from the Python standard library. If we use
-3rd party modules, like psycopg2, corresponding IO will still be blocking:
+Under old gevent setups, 3rd party modules like psycopg2 blocked the event loop because they did not use standard library IO.
+
+With Python 3.14t and `gthread`, the OS schedules real parallel threads, so psycopg2 no longer blocks the entire application process when querying the database. No `psycogreen` or `monkey.patch_all()` is needed.
 
 ```python
 # psycopg2/app.py
-
-from gevent import monkey
-monkey.patch_all()
 
 import os
 
@@ -226,42 +182,14 @@ def index():
     return 'Hi there! {} {}'.format(resp.text, cur.fetchall()[0])
 ```
 
-We expect ~2 seconds to perform 10 one-second-long HTTP requests with concurrency 5,
-but the test shows >5 seconds due to the blocking behavior of psycopg2 calls:
-
 ```bash
-$ docker-compose -f bonus-psycopg2-gevent.yml build
-$ docker-compose -f bonus-psycopg2-gevent.yml up
+$ docker-compose -f bonus-psycopg2-gthread.yml build
+$ docker-compose -f bonus-psycopg2-gthread.yml up
 
 $ ab -r -n 10 -c 5 http://127.0.0.1:3000/?delay=1
-> Concurrency Level:      5
-> Time taken for tests:   6.670 seconds
-> Complete requests:      10
-> Failed requests:        0
-> Requests per second:    1.50 [#/sec] (mean)
-```
-
-To bypass this limitation, we need to use psycogreen module to patch psycopg2:
-
-
-```python
-# psycopg2/patched.py
-
-from psycogreen.gevent import patch_psycopg
-patch_psycopg()
-
-from app import app
-```
-
-```bash
-$ docker-compose -f bonus-psycopg2-gevent.yml build
-$ docker-compose -f bonus-psycopg2-gevent.yml up
-
-$ ab -r -n 10 -c 5 http://127.0.0.1:3001/?delay=1
 > Concurrency Level:      5
 > Time taken for tests:   3.148 seconds
 > Complete requests:      10
 > Failed requests:        0
 > Requests per second:    3.18 [#/sec] (mean)
 ```
-

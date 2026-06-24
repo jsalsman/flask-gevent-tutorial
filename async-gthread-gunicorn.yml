@@ -4,11 +4,12 @@ services:
     init: true
     build: 
       context: ./flask_app
-      dockerfile: Dockerfile-gevent-pywsgi
+      dockerfile: Dockerfile-gthread-gunicorn
     environment: 
       - PORT_APP=3000
       - PORT_API=4000
-      - THREADS=without
+      - WORKERS=1
+      - ASYNC_CORES=50
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
